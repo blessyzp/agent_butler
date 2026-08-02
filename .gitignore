@@ -1,0 +1,18 @@
+# ── 绝不提交的敏感内容 ──
+.env
+*.key
+data/
+*.db
+*.db-journal
+*.sqlite
+
+# ── Python ──
+__pycache__/
+*.py[cod]
+.venv/
+venv/
+*.egg-info/
+
+# ── 日志 ──
+*.log
+logs/

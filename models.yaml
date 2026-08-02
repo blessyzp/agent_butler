@@ -1,0 +1,74 @@
+# ═══════════════════════════════════════════════════════════
+#  模型注册表 —— 迭代模型只需在此增删条目，代码零改动
+#
+#  每个模型声明：
+#    backend   : ollama | deepseek | openai_compatible  (决定用哪个适配器)
+#    kind      : chat | embed | vision
+#    model     : 后端实际调用的模型名
+#    dim       : 仅 embed 需要 —— 向量维度（换嵌入模型时用于兼容校验）
+#    context   : 上下文窗口 token 数（供调度参考）
+#    cost      : local | 每百万token价格（供路由决策/记账）
+#
+#  ⚠ 更换 embed 模型 = 语义空间改变，必须触发重嵌入迁移（见 versioning.py）
+# ═══════════════════════════════════════════════════════════
+models:
+  # ── 本地聊天（Ollama）──
+  qwen2.5-14b:
+    backend: ollama
+    kind: chat
+    model: "qwen2.5:14b"
+    context: 32768
+    cost: local
+
+  qwen2.5-7b:
+    backend: ollama
+    kind: chat
+    model: "qwen2.5:7b"
+    context: 32768
+    cost: local
+
+  # ── 云端聊天兜底（DeepSeek，OpenAI 兼容协议）──
+  deepseek-chat:
+    backend: deepseek
+    kind: chat
+    model: "deepseek-chat"
+    context: 65536
+    cost: 1.0          # 约 ¥1/百万 token（输入）
+
+  # ── 图像理解（本地）──
+  minicpm-v:
+    backend: ollama
+    kind: vision
+    model: "minicpm-v"
+    context: 8192
+    cost: local
+
+  # ── 向量嵌入（本地）──
+  nomic-embed-text:
+    backend: ollama
+    kind: embed
+    model: "nomic-embed-text"
+    dim: 768           # ⚠ 换模型前确认新模型维度，不一致必须重嵌入
+    context: 8192
+    cost: local
+
+# ── 迭代示例（想换主力模型时，取消注释并改 config.yaml 的 roles）──
+#  llama3.3-70b:
+#    backend: ollama
+#    kind: chat
+#    model: "llama3.3:70b"
+#    context: 131072
+#    cost: local
+#
+#  claude-sonnet:
+#    backend: openai_compatible   # 走兼容网关
+#    kind: chat
+#    model: "claude-sonnet-4-6"
+#    context: 200000
+#    cost: 18.0
+#
+#  bge-large-zh:                   # 换嵌入模型示例 —— 维度不同，务必重嵌入
+#    backend: ollama
+#    kind: embed
+#    model: "bge-large:zh"
+#    dim: 1024

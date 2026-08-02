@@ -1,0 +1,554 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>电子管家</title>
+<style>
+  :root{
+    --bg:#12141a; --panel:#1b1e26; --panel2:#232733; --line:#2f3441;
+    --fg:#e6e8ee; --dim:#8b91a3; --accent:#6ea8fe; --accent-dim:#2a4a7f;
+    --ok:#4ec9a0; --warn:#e8b84b; --bad:#e8685d;
+    --radius:10px;
+  }
+  *{box-sizing:border-box}
+  body{margin:0;background:var(--bg);color:var(--fg);
+       font:15px/1.6 system-ui,"Segoe UI","Microsoft YaHei",sans-serif;}
+  button,input,select,textarea{font:inherit;color:inherit}
+  button{cursor:pointer}
+
+  /* ── 顶栏 ── */
+  header{display:flex;align-items:center;gap:14px;flex-wrap:wrap;
+         padding:12px 18px;background:var(--panel);border-bottom:1px solid var(--line);
+         position:sticky;top:0;z-index:10}
+  header h1{margin:0;font-size:17px;font-weight:600;letter-spacing:.5px}
+  .spacer{flex:1}
+  .badge{padding:3px 10px;border-radius:999px;font-size:12.5px;
+         background:var(--panel2);border:1px solid var(--line);color:var(--dim);
+         white-space:nowrap}
+  .badge b{color:var(--fg);font-weight:600}
+  .p-low{border-color:#2c5f4a;color:var(--ok)}
+  .p-medium{border-color:#5f5330;color:var(--warn)}
+  .p-high,.p-critical{border-color:#6b3a35;color:var(--bad)}
+
+  /* ── 标签页 ── */
+  nav{display:flex;gap:2px;padding:0 12px;background:var(--panel);
+      border-bottom:1px solid var(--line);position:sticky;top:53px;z-index:9}
+  nav button{background:none;border:none;padding:10px 16px;color:var(--dim);
+             border-bottom:2px solid transparent;margin-bottom:-1px}
+  nav button:hover{color:var(--fg)}
+  nav button.on{color:var(--accent);border-bottom-color:var(--accent)}
+
+  main{max-width:860px;margin:0 auto;padding:18px}
+  .tab{display:none} .tab.on{display:block}
+  .card{background:var(--panel);border:1px solid var(--line);
+        border-radius:var(--radius);padding:16px;margin-bottom:14px}
+  .card h3{margin:0 0 12px;font-size:14px;color:var(--dim);font-weight:600;
+           letter-spacing:.5px;text-transform:uppercase}
+
+  /* ── 聊天 ── */
+  #log{min-height:240px;max-height:calc(100vh - 320px);overflow-y:auto;
+       display:flex;flex-direction:column;gap:12px;padding:4px}
+  .msg{max-width:78%;padding:9px 13px;border-radius:14px;white-space:pre-wrap;
+       word-break:break-word;animation:in .18s ease}
+  @keyframes in{from{opacity:0;transform:translateY(4px)}to{opacity:1}}
+  .msg.me{align-self:flex-end;background:var(--accent-dim);
+          border-bottom-right-radius:4px}
+  .msg.bot{align-self:flex-start;background:var(--panel2);
+           border-bottom-left-radius:4px}
+  .msg .meta{display:block;font-size:11.5px;color:var(--dim);margin-top:5px}
+  .msg.sys{align-self:center;background:none;color:var(--dim);font-size:13px;
+           max-width:100%;text-align:center}
+  .msg.err{align-self:center;background:#3a2422;color:#ffb4ad;font-size:13px;
+           border:1px solid #6b3a35;max-width:100%}
+
+  .composer{display:flex;gap:8px;align-items:flex-end;margin-top:14px}
+  .composer textarea{flex:1;resize:none;min-height:44px;max-height:150px;
+       background:var(--panel2);border:1px solid var(--line);
+       border-radius:var(--radius);padding:11px 13px;outline:none}
+  .composer textarea:focus{border-color:var(--accent)}
+  .btn{background:var(--panel2);border:1px solid var(--line);
+       border-radius:var(--radius);padding:11px 14px;white-space:nowrap}
+  .btn:hover:not(:disabled){border-color:var(--accent);color:var(--accent)}
+  .btn:disabled{opacity:.45;cursor:not-allowed}
+  .btn.primary{background:var(--accent);border-color:var(--accent);color:#0d1117;
+               font-weight:600}
+  .btn.primary:hover:not(:disabled){filter:brightness(1.1);color:#0d1117}
+  .btn.rec{background:#5a2420;border-color:var(--bad);color:#ffb4ad;
+           animation:pulse 1.2s infinite}
+  @keyframes pulse{50%{opacity:.55}}
+  .btn.sm{padding:5px 10px;font-size:13px}
+  .hint{font-size:12.5px;color:var(--dim);margin-top:8px}
+
+  /* ── 任务 ── */
+  .task{display:flex;gap:10px;align-items:flex-start;padding:10px 0;
+        border-bottom:1px solid var(--line)}
+  .task:last-child{border-bottom:none}
+  .task .body{flex:1;min-width:0}
+  .task .content{word-break:break-word}
+  .task.done .content{text-decoration:line-through;color:var(--dim)}
+  .task .sub{font-size:12.5px;color:var(--dim);margin-top:3px}
+  .task .sub .overdue{color:var(--bad)}
+  .task .acts{display:flex;gap:6px;flex-shrink:0}
+  .row{display:flex;gap:8px;flex-wrap:wrap}
+  .row > *{flex:1;min-width:150px}
+  input[type=text],input[type=datetime-local],select,input[type=number]{
+      background:var(--panel2);border:1px solid var(--line);
+      border-radius:var(--radius);padding:9px 11px;outline:none;width:100%}
+  input:focus,select:focus{border-color:var(--accent)}
+
+  /* ── 设置 ── */
+  .field{display:flex;align-items:center;gap:12px;padding:9px 0;
+         border-bottom:1px solid var(--line);flex-wrap:wrap}
+  .field:last-child{border-bottom:none}
+  .field label{flex:1;min-width:160px}
+  .field .ctl{display:flex;align-items:center;gap:10px}
+  .field input[type=range]{width:150px;accent-color:var(--accent)}
+  .field .num{min-width:44px;text-align:right;color:var(--accent);
+              font-variant-numeric:tabular-nums}
+  .field input[type=checkbox]{width:18px;height:18px;accent-color:var(--accent)}
+  .field select,.field input[type=text]{width:auto;min-width:150px}
+
+  /* ── 状态 ── */
+  .kv{display:grid;grid-template-columns:auto 1fr;gap:7px 16px;font-size:14px}
+  .kv dt{color:var(--dim)} .kv dd{margin:0}
+  .bar{height:6px;background:var(--panel2);border-radius:3px;overflow:hidden;
+       margin-top:5px}
+  .bar i{display:block;height:100%;background:var(--accent);transition:width .3s}
+  .yes{color:var(--ok)} .no{color:var(--bad)}
+  .empty{color:var(--dim);text-align:center;padding:24px 0}
+  #toast{position:fixed;bottom:20px;left:50%;transform:translateX(-50%);
+         background:var(--panel2);border:1px solid var(--line);
+         border-radius:var(--radius);padding:10px 18px;opacity:0;
+         transition:opacity .25s;pointer-events:none;z-index:99}
+  #toast.on{opacity:1}
+  #toast.bad{border-color:var(--bad);color:#ffb4ad}
+</style>
+</head>
+<body>
+
+<header>
+  <h1 id="title">电子管家</h1>
+  <span class="badge" id="b-model">模型 —</span>
+  <span class="badge" id="b-press">压力 —</span>
+  <span class="spacer"></span>
+  <span class="badge" id="b-todo">待办 —</span>
+</header>
+
+<nav>
+  <button data-tab="chat" class="on">聊天</button>
+  <button data-tab="tasks">任务</button>
+  <button data-tab="settings">设置</button>
+  <button data-tab="status">状态</button>
+</nav>
+
+<main>
+  <!-- ══ 聊天 ══ -->
+  <section class="tab on" id="tab-chat">
+    <div class="card">
+      <div id="log"></div>
+      <div class="composer">
+        <textarea id="input" rows="1" placeholder="说点什么…（Enter 发送，Shift+Enter 换行）"></textarea>
+        <button class="btn" id="btn-img" title="发送图片">图片</button>
+        <button class="btn" id="btn-mic" title="录音发送">录音</button>
+        <button class="btn primary" id="btn-send">发送</button>
+      </div>
+      <div class="hint" id="chat-hint"></div>
+      <input type="file" id="file-img" accept="image/*" hidden>
+    </div>
+  </section>
+
+  <!-- ══ 任务 ══ -->
+  <section class="tab" id="tab-tasks">
+    <div class="card">
+      <h3>新建任务</h3>
+      <div class="row">
+        <input type="text" id="t-content" placeholder="要做什么？">
+        <input type="datetime-local" id="t-due" title="截止时间（可留空）">
+      </div>
+      <div class="row" style="margin-top:8px">
+        <input type="text" id="t-type" placeholder="分类（可留空，如 工作 / 生活）">
+        <button class="btn primary" id="t-add" style="flex:0 0 auto;min-width:90px">添加</button>
+      </div>
+    </div>
+    <div class="card">
+      <h3 style="display:flex;align-items:center;gap:10px">
+        <span id="task-title">待办</span>
+        <span class="spacer"></span>
+        <button class="btn sm" id="t-toggle">看已完成</button>
+      </h3>
+      <div id="task-list"></div>
+    </div>
+  </section>
+
+  <!-- ══ 设置 ══ -->
+  <section class="tab" id="tab-settings">
+    <div id="settings-groups"></div>
+    <button class="btn primary" id="s-save">保存设置</button>
+  </section>
+
+  <!-- ══ 状态 ══ -->
+  <section class="tab" id="tab-status">
+    <div class="card"><h3>资源</h3><div id="st-res"></div></div>
+    <div class="card"><h3>模型后端</h3><div id="st-back"></div></div>
+  </section>
+</main>
+
+<div id="toast"></div>
+
+<script>
+"use strict";
+const $  = s => document.querySelector(s);
+const $$ = s => [...document.querySelectorAll(s)];
+const esc = s => String(s ?? "").replace(/[&<>"]/g,
+  c => ({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;"}[c]));
+
+/* ── HTTP 封装：把后端 HTTPException 的 detail 变成可读错误 ── */
+async function api(path, opts = {}) {
+  const r = await fetch(path, opts);
+  if (!r.ok) {
+    let d = r.statusText;
+    try { d = (await r.json()).detail ?? d; } catch {}
+    throw new Error(typeof d === "string" ? d : JSON.stringify(d));
+  }
+  return r.status === 204 ? null : r.json();
+}
+const json = (method, body) => ({
+  method, headers: {"Content-Type": "application/json"}, body: JSON.stringify(body),
+});
+
+let toastTimer;
+function toast(msg, bad = false) {
+  const t = $("#toast");
+  t.textContent = msg;
+  t.className = "on" + (bad ? " bad" : "");
+  clearTimeout(toastTimer);
+  toastTimer = setTimeout(() => (t.className = ""), 2600);
+}
+
+/* ══════════════ 标签页切换 ══════════════ */
+$$("nav button").forEach(b => b.onclick = () => {
+  $$("nav button").forEach(x => x.classList.toggle("on", x === b));
+  $$(".tab").forEach(s => s.classList.toggle("on", s.id === "tab-" + b.dataset.tab));
+  if (b.dataset.tab === "tasks")    loadTasks();
+  if (b.dataset.tab === "settings") loadSettings();
+  if (b.dataset.tab === "status")   refreshStatus();
+});
+
+/* ══════════════ 聊天 ══════════════ */
+const log = $("#log");
+function bubble(cls, text, meta) {
+  const d = document.createElement("div");
+  d.className = "msg " + cls;
+  d.innerHTML = esc(text) + (meta ? `<span class="meta">${esc(meta)}</span>` : "");
+  log.append(d);
+  log.scrollTop = log.scrollHeight;
+  return d;
+}
+
+async function loadHistory() {
+  try {
+    const h = await api("/history?limit=30");
+    log.innerHTML = "";
+    if (!h.length) { bubble("sys", "还没有对话记录，打个招呼吧。"); return; }
+    for (const t of h) {
+      if (t.user)  bubble("me",  t.user);
+      if (t.reply) bubble("bot", t.reply, fmtTime(t.created_at));
+    }
+  } catch (e) {
+    log.innerHTML = "";
+    bubble("err", "读取历史失败：" + e.message);
+  }
+}
+
+/* 发送期间锁住所有输入，避免并发压垮本地模型 */
+function busy(on) {
+  ["#btn-send", "#btn-img", "#btn-mic", "#input"].forEach(s => $(s).disabled = on);
+  $("#chat-hint").textContent = on ? "管家正在思考…（本地大模型首次响应可能要几十秒）" : "";
+}
+
+async function send() {
+  const text = $("#input").value.trim();
+  if (!text) return;
+  $("#input").value = "";
+  autosize();
+  bubble("me", text);
+  busy(true);
+  try {
+    const r = await api("/chat", json("POST", {message: text}));
+    bubble("bot", r.reply);
+    refreshStatus();               // 回复里可能提取出了新任务
+  } catch (e) {
+    bubble("err", "发送失败：" + e.message);
+  } finally { busy(false); }
+}
+
+$("#btn-send").onclick = send;
+const inp = $("#input");
+function autosize() { inp.style.height = "auto"; inp.style.height = inp.scrollHeight + "px"; }
+inp.oninput = autosize;
+inp.onkeydown = e => {
+  if (e.key === "Enter" && !e.shiftKey && !e.isComposing) { e.preventDefault(); send(); }
+};
+
+/* ── 图片 ── */
+$("#btn-img").onclick = () => $("#file-img").click();
+$("#file-img").onchange = async e => {
+  const f = e.target.files[0];
+  e.target.value = "";                       // 允许重复选同一张
+  if (!f) return;
+  const caption = $("#input").value.trim();
+  $("#input").value = ""; autosize();
+  bubble("me", (caption ? caption + "\n" : "") + `［图片］${f.name}`);
+  busy(true);
+  const fd = new FormData();
+  fd.append("file", f);
+  fd.append("text", caption);
+  try {
+    const r = await api("/input/image", {method: "POST", body: fd});
+    bubble("bot", r.reply, "看图：" + r.caption);
+  } catch (err) {
+    bubble("err", "图片处理失败：" + err.message +
+      "\n（需要先 ollama pull minicpm-v）");
+  } finally { busy(false); }
+};
+
+/* ── 录音 ── */
+let rec, chunks = [];
+$("#btn-mic").onclick = async () => {
+  if (rec && rec.state === "recording") { rec.stop(); return; }
+  if (!navigator.mediaDevices?.getUserMedia) {
+    return bubble("err", "此浏览器不支持录音（或页面非 localhost/HTTPS）");
+  }
+  let stream;
+  try {
+    stream = await navigator.mediaDevices.getUserMedia({audio: true});
+  } catch {
+    return bubble("err", "麦克风权限被拒绝");
+  }
+  chunks = [];
+  rec = new MediaRecorder(stream);
+  rec.ondataavailable = e => e.data.size && chunks.push(e.data);
+  rec.onstop = async () => {
+    stream.getTracks().forEach(t => t.stop());
+    $("#btn-mic").className = "btn";
+    $("#btn-mic").textContent = "录音";
+    const blob = new Blob(chunks, {type: rec.mimeType || "audio/webm"});
+    if (blob.size < 1200) return bubble("err", "录音太短，没有内容");
+    const d = bubble("me", "［语音］转写中…");
+    busy(true);
+    const fd = new FormData();
+    fd.append("file", blob, "voice.webm");
+    try {
+      const r = await api("/input/voice", {method: "POST", body: fd});
+      d.innerHTML = esc(r.transcript) + '<span class="meta">语音转写</span>';
+      bubble("bot", r.reply);
+    } catch (err) {
+      d.remove();
+      bubble("err", "语音处理失败：" + err.message +
+        "\n（需要 pip install faster-whisper；首次调用会下载模型）");
+    } finally { busy(false); }
+  };
+  rec.start();
+  $("#btn-mic").className = "btn rec";
+  $("#btn-mic").textContent = "停止";
+};
+
+/* ══════════════ 任务 ══════════════ */
+let taskView = "pending";
+$("#t-toggle").onclick = () => {
+  taskView = taskView === "pending" ? "done" : "pending";
+  loadTasks();
+};
+
+function fmtTime(iso) {
+  if (!iso) return "";
+  const d = new Date(iso);
+  if (isNaN(d)) return iso;
+  const now = new Date();
+  const sameYear = d.getFullYear() === now.getFullYear();
+  return d.toLocaleString("zh-CN", {
+    year: sameYear ? undefined : "numeric", month: "numeric", day: "numeric",
+    hour: "2-digit", minute: "2-digit",
+  });
+}
+
+async function loadTasks() {
+  $("#task-title").textContent = taskView === "pending" ? "待办" : "已完成";
+  $("#t-toggle").textContent   = taskView === "pending" ? "看已完成" : "看待办";
+  const box = $("#task-list");
+  try {
+    const list = await api("/tasks?status=" + taskView);
+    if (!list.length) {
+      box.innerHTML = `<div class="empty">${taskView === "pending" ? "没有待办，清爽。" : "还没有完成过任务。"}</div>`;
+      return;
+    }
+    const now = Date.now();
+    box.innerHTML = list.map(t => {
+      const overdue = t.due_at && new Date(t.due_at) < now && taskView === "pending";
+      const bits = [];
+      if (t.task_type) bits.push(esc(t.task_type));
+      if (t.due_at) bits.push(`<span class="${overdue ? "overdue" : ""}">${overdue ? "已逾期 " : "截止 "}${esc(fmtTime(t.due_at))}</span>`);
+      if (t.reminded_count) bits.push(`已提醒 ${t.reminded_count} 次`);
+      return `<div class="task ${taskView === "done" ? "done" : ""}">
+        <div class="body">
+          <div class="content">${esc(t.content)}</div>
+          ${bits.length ? `<div class="sub">${bits.join(" · ")}</div>` : ""}
+        </div>
+        <div class="acts">
+          <button class="btn sm" data-act="${taskView === "pending" ? "done" : "pending"}" data-id="${t.id}">${taskView === "pending" ? "完成" : "撤销"}</button>
+          <button class="btn sm" data-act="edit" data-id="${t.id}">改</button>
+          <button class="btn sm" data-act="del"  data-id="${t.id}">删</button>
+        </div></div>`;
+    }).join("");
+  } catch (e) {
+    box.innerHTML = `<div class="empty">加载失败：${esc(e.message)}</div>`;
+  }
+}
+
+$("#task-list").onclick = async e => {
+  const b = e.target.closest("button[data-act]");
+  if (!b) return;
+  const id = b.dataset.id, act = b.dataset.act;
+  const row = b.closest(".task");
+  try {
+    if (act === "del") {
+      if (!confirm("删除这条任务？不可恢复。")) return;
+      await api("/tasks/" + id, {method: "DELETE"});
+      toast("已删除");
+    } else if (act === "edit") {
+      const old = row.querySelector(".content").textContent;
+      const next = prompt("修改任务内容：", old);
+      if (next === null || next.trim() === "" || next === old) return;
+      await api("/tasks/" + id, json("PATCH", {content: next}));
+      toast("已修改");
+    } else {
+      await api("/tasks/" + id, json("PATCH", {status: act}));
+      toast(act === "done" ? "已完成" : "已撤销");
+    }
+    loadTasks(); refreshStatus();
+  } catch (err) { toast(err.message, true); }
+};
+
+$("#t-add").onclick = async () => {
+  const content = $("#t-content").value.trim();
+  if (!content) return toast("先写点内容", true);
+  const dueRaw = $("#t-due").value;
+  const body = {
+    content,
+    task_type: $("#t-type").value.trim() || null,
+    // datetime-local 无时区，转成带本地时区的 ISO，后端才能正确比较
+    due_at: dueRaw ? new Date(dueRaw).toISOString() : null,
+  };
+  try {
+    await api("/tasks", json("POST", body));
+    $("#t-content").value = ""; $("#t-due").value = ""; $("#t-type").value = "";
+    toast("已添加");
+    if (taskView !== "pending") { taskView = "pending"; }
+    loadTasks(); refreshStatus();
+  } catch (e) { toast(e.message, true); }
+};
+
+/* ══════════════ 设置（schema 驱动，前端不硬编码任何字段）══════════════ */
+async function loadSettings() {
+  const box = $("#settings-groups");
+  let schema;
+  try { schema = await api("/settings/schema"); }
+  catch (e) { box.innerHTML = `<div class="card empty">加载失败：${esc(e.message)}</div>`; return; }
+
+  const groups = {};
+  for (const f of schema) (groups[f.group || "其他"] ??= []).push(f);
+
+  box.innerHTML = Object.entries(groups).map(([g, fields]) => `
+    <div class="card"><h3>${esc(g)}</h3>
+      ${fields.map(f => `<div class="field">
+        <label for="f-${esc(f.key)}">${esc(f.label)}</label>
+        <div class="ctl">${control(f)}</div>
+      </div>`).join("")}
+    </div>`).join("");
+
+  // 滑块与数字联动
+  box.querySelectorAll('input[type=range]').forEach(r => {
+    r.oninput = () => r.parentElement.querySelector(".num").textContent = r.value;
+  });
+}
+
+function control(f) {
+  const id = `f-${esc(f.key)}`, k = esc(f.key);
+  if (f.kind === "int")
+    return `<input type="range" id="${id}" data-key="${k}" data-kind="int"
+              min="${f.min}" max="${f.max}" value="${f.value}">
+            <span class="num">${esc(f.value)}</span>`;
+  if (f.kind === "bool")
+    return `<input type="checkbox" id="${id}" data-key="${k}" data-kind="bool"
+              ${f.value ? "checked" : ""}>`;
+  if (f.kind === "choice")
+    return `<select id="${id}" data-key="${k}" data-kind="choice">${
+      f.choices.map(c => `<option ${c === f.value ? "selected" : ""}>${esc(c)}</option>`).join("")
+    }</select>`;
+  return `<input type="text" id="${id}" data-key="${k}" data-kind="str"
+            value="${esc(f.value)}">`;
+}
+
+$("#s-save").onclick = async () => {
+  const patch = {};
+  $$("#settings-groups [data-key]").forEach(el => {
+    patch[el.dataset.key] = el.dataset.kind === "bool" ? el.checked
+                          : el.dataset.kind === "int"  ? Number(el.value)
+                          : el.value;
+  });
+  try {
+    await api("/settings", json("PUT", {patch}));
+    toast("设置已保存");
+    refreshStatus();                 // 管家称呼可能变了
+  } catch (e) { toast(e.message, true); }
+};
+
+/* ══════════════ 状态 ══════════════ */
+async function refreshStatus() {
+  let s;
+  try { s = await api("/status"); }
+  catch { $("#b-press").textContent = "后端未响应"; return; }
+
+  const r = s.resource;
+  $("#b-model").innerHTML = `模型 <b>${esc(s.model || "无可用")}</b>`;
+  $("#b-press").innerHTML = `压力 <b>${esc(r.pressure)}</b>`;
+  $("#b-press").className = "badge p-" + r.pressure;
+  $("#b-todo").innerHTML  = `待办 <b>${s.pending_tasks}</b>`;
+
+  const vramUsed = r.gpu_present ? r.vram_total_mb - r.vram_available_mb : 0;
+  const ramUsed  = r.ram_total_gb - r.ram_available_gb;
+  const pct = (a, b) => b ? Math.round(a / b * 100) : 0;
+  $("#st-res").innerHTML = `<dl class="kv">
+    <dt>显存</dt><dd>${r.gpu_present
+      ? `${vramUsed} / ${r.vram_total_mb} MB（占用 ${pct(vramUsed, r.vram_total_mb)}%）
+         <div class="bar"><i style="width:${pct(vramUsed, r.vram_total_mb)}%"></i></div>`
+      : '<span class="no">未检测到 GPU</span>'}</dd>
+    <dt>内存</dt><dd>${ramUsed.toFixed(1)} / ${r.ram_total_gb.toFixed(1)} GB（占用 ${pct(ramUsed, r.ram_total_gb)}%）
+      <div class="bar"><i style="width:${pct(ramUsed, r.ram_total_gb)}%"></i></div></dd>
+    <dt>CPU</dt><dd>${r.cpu_percent.toFixed(0)}%
+      <div class="bar"><i style="width:${r.cpu_percent}%"></i></div></dd>
+    <dt>压力等级</dt><dd>${esc(r.pressure)}</dd>
+    <dt>当前角色</dt><dd>${esc(s.active_role || "—")}</dd>
+  </dl>`;
+
+  const ok = v => v ? '<span class="yes">✓ 可用</span>' : '<span class="no">✗ 不可用</span>';
+  $("#st-back").innerHTML = `<dl class="kv">${
+    Object.entries(s.backends).map(([k, v]) => `<dt>${esc(k)}</dt><dd>${ok(v)}</dd>`).join("")
+  }<dt>语音识别</dt><dd>${ok(s.speech_available)}</dd></dl>`;
+}
+
+/* ══════════════ 启动 ══════════════ */
+(async function init() {
+  refreshStatus();
+  loadHistory();
+  try {
+    const st = await api("/settings");
+    const name = st["persona.name"];
+    if (name) { $("#title").textContent = name; document.title = name; }
+  } catch {}
+  setInterval(refreshStatus, 20000);
+})();
+</script>
+</body>
+</html>

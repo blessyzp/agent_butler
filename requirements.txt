@@ -1,0 +1,22 @@
+# Core
+requests>=2.31.0
+psutil>=5.9.0
+APScheduler>=3.10.0
+PyYAML>=6.0
+python-dotenv>=1.0.0
+
+# Encryption
+cryptography>=42.0.0
+keyring>=24.0.0
+
+# HTTP API (frontend backbone)
+fastapi>=0.110.0
+uvicorn>=0.27.0
+python-multipart>=0.0.9
+
+# Vector memory (optional; degrades to recency recall if absent)
+chromadb>=0.4.22
+
+# Multimodal: voice (CPU by default) + image preprocessing
+faster-whisper>=1.0.0
+pillow>=10.0.0

@@ -1,0 +1,71 @@
+# ═══════════════════════════════════════════════════════════
+#  电子管家配置 —— 所有可调参数集中于此
+# ═══════════════════════════════════════════════════════════
+
+# ── 数据存储路径（放高速 NVMe）──
+paths:
+  data_dir: "D:/butler/data"
+  memory_db: "D:/butler/data/memory.db"        # 加密结构化存储
+  vector_dir: "D:/butler/data/chroma"          # 向量记忆
+  profile_file: "D:/butler/data/profile.json"  # 用户画像（加密）
+
+# ── 备份（迁移前自动快照，可回滚）──
+backup:
+  keep_count: 10          # 保留最近份数，更旧自动清理
+
+# ── 记忆检索 ──
+memory:
+  # 向量语义检索开关。向量库只是可重建的缓存（真相源永远是加密 SQLite），
+  # 关掉只会退化成"最近 N 条"时间召回，不丢任何数据。
+  # ⚠ 已知问题：chromadb 1.5.x 的 wheel 按 numpy 2.x ABI 编译，本机 numpy
+  #   为 1.23.5 时 collection.add() 会直接段错误（进程崩溃，try/except 拦不住）。
+  #   修好环境（升 numpy 或降 chromadb）之前保持 false。
+  vector_enabled: false
+
+# ── LLM 模型路由（按角色引用 models.yaml 里的模型 ID）──
+# 换模型只需改这里的 ID 或编辑 models.yaml，代码零改动。
+llm:
+  timeout_seconds: 120
+  roles:
+    chat_large: "qwen2.5-14b"      # 压力 low  → 主力（本地）
+    chat_small: "qwen2.5-7b"       # 压力 medium/high → 轻量（本地）
+    chat_cloud: "deepseek-chat"    # 压力 critical/游戏 → 云端兜底
+    vision: "minicpm-v"            # 图像理解
+    embed: "nomic-embed-text"      # 向量嵌入（更换需触发重嵌入迁移！）
+
+# ── 资源监控阈值 ──
+resource:
+  poll_interval_seconds: 10      # 采样频率
+  switch_cooldown_seconds: 60    # 模型切换冷却（防抖）
+  # VRAM 阈值（MB）—— 基于 RTX 3060 12GB
+  vram_large_min: 9500           # 跑 14B 所需最低剩余
+  vram_small_min: 5000           # 跑 7B 所需最低剩余
+  vram_tiny_min: 2000            # 最低可本地推理
+  ram_min_gb: 2.0                # 最低剩余内存
+  cpu_max_percent: 85            # CPU 过载阈值
+
+# ── 提醒与监督策略 ──
+reminder:
+  tick_minutes: 5                # 提醒检查频率
+  max_per_day: 8                 # 每日提醒上限（防骚扰）
+  quiet_hours: [23, 7]           # 免打扰时段 [起, 止]（24h制）
+  default_lead_minutes: 60       # 默认提前提醒量
+  supervision_enabled: true      # 开启监督追问
+  silence_check_hours: 5         # 用户沉默超此时数则关心
+
+# ── 图像理解（上传图片前先在本地压缩，省显存/省时间）──
+vision:
+  max_dimension: 1280            # 长边超过则等比缩小（像素）
+
+# ── 语音识别（faster-whisper，本地）──
+speech:
+  model_size: "small"            # tiny/base/small/medium/large-v3，CPU 建议 small
+  device: "cpu"                  # 用 CPU 避免和聊天/视觉模型抢 GPU 显存
+  compute_type: "int8"           # cpu 配 int8 最快；若 device 改 cuda 建议 float16
+  language: null                 # 留空自动检测；确定是中文可填 "zh" 提速
+
+# ── 沟通语气（默认，可被画像覆盖）──
+persona:
+  tone: "playful"                # gentle / playful / serious / warm
+  use_emoji: true
+  name: "小管家"                  # 管家自称

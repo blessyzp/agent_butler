@@ -333,3 +333,8 @@ class Memory:
 
     def close(self) -> None:
         self.conn.close()
+        # PersistentClient 内部持有自己的 sqlite 连接（chroma.sqlite3），不主动
+        # stop() 的话文件锁不释放——备份/恢复时 shutil.rmtree 向量目录会因
+        # PermissionError 失败（Windows 下文件被占用不能删）。
+        if self._client is not None:
+            self._client._system.stop()

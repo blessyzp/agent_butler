@@ -17,10 +17,10 @@ backup:
 memory:
   # 向量语义检索开关。向量库只是可重建的缓存（真相源永远是加密 SQLite），
   # 关掉只会退化成"最近 N 条"时间召回，不丢任何数据。
-  # ⚠ 已知问题：chromadb 1.5.x 的 wheel 按 numpy 2.x ABI 编译，本机 numpy
-  #   为 1.23.5 时 collection.add() 会直接段错误（进程崩溃，try/except 拦不住）。
-  #   修好环境（升 numpy 或降 chromadb）之前保持 false。
-  vector_enabled: false
+  # 此前 chromadb 1.5.x 的 wheel 按 numpy 2.x ABI 编译，本机 numpy 1.23.5
+  # 下 collection.add() 会直接段错误。已降级 chromadb 到 0.5.18（配套锁定
+  # onnxruntime==1.17.3），隔离环境下写入+查询双双验证通过，重新开启。
+  vector_enabled: true
 
 # ── LLM 模型路由（按角色引用 models.yaml 里的模型 ID）──
 # 换模型只需改这里的 ID 或编辑 models.yaml，代码零改动。

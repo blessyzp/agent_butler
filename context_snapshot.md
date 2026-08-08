@@ -183,12 +183,14 @@ butler/
 | 9 | **本轮 · 需要留意的风险点**：上面那次冒烟测试用临时测试密码，实际连到的是**真实的** `D:/butler/data/memory.db`（因为没有做路径隔离），导致该文件 mtime 被更新 | 测试脚本只调用了 `/health` `/status`（读 pending 任务列表）和两个多模态端点（图片调用在真正解密任何记录前就因为 Ollama 视觉模型未拉取而 404 失败；语音测试传的是空文件，提前 400 拒绝），**全程没有对已存在的加密字段做写入**，mtime 变化基本可判定是 SQLite WAL checkpoint 的正常读操作副作用，不是数据损坏；但这是一次不该发生的真实环境接触 | 已核实 `data/settings.json`、`data/profile.json` 均不存在（未被创建/污染）；**教训**：以后任何 API/Butler 级别的冒烟测试必须先把 `Config`/`paths.data_dir` 显式重定向到一次性临时目录，绝不能靠"传个不存在的假环境变量"当隔离手段（`BUTLER_DATA_DIR_OVERRIDE=1` 这种是无效的，因为代码根本不读这个变量） |
 
 | 10 | **本轮**：前端"改任务内容"按钮点了没反应 | `PATCH /tasks/{id}` 的 `TaskPatch` 声明了 `content` 字段，但 handler 里只判断了 `status == "done"`，`content` **被完全忽略**，静默返回 `{"ok": true}` | handler 补上 `update_task_content()`；顺带支持 `status="pending"` 撤销完成；空 content / 非法 status 一律 400 |
-| 11 | **本轮 · 严重**：写入情景记忆时**整个进程段错误退出**（exit 139），Python 层 `try/except` 完全拦不住 | `chromadb 1.5.9` 的 wheel 按 **numpy 2.x ABI** 编译，本机 numpy 是 **1.23.5**，`collection.add()` 一调用就崩。它的包元数据只写了 `numpy>=1.22.5`（过期声明），所以 pip 装的时候毫无警告。**此前一直没暴露**是因为 `nomic-embed-text` 没拉，`registry.embed()` 抛异常被 `except Exception: pass` 吞掉，向量写入路径从未真正执行；模型拉下来后这条路径第一次被走到就崩了 | ① `config.yaml` 新增 `memory.vector_enabled` 开关（默认 true，当前置 **false**），让"向量只是可重建缓存"这个设计承诺真正可用 —— 代码里的降级路径（退化为时间召回）本来就有，只是没有开关能触发；② 环境层面的根治（升 numpy 或降 chromadb）**待用户拍板**，见下方 5.1 |
+| ~~11~~ | ~~**严重**：写入情景记忆时**整个进程段错误退出**（exit 139），Python 层 `try/except` 完全拦不住~~ | `chromadb 1.5.9` 的 wheel 按 **numpy 2.x ABI** 编译，本机 numpy 是 **1.23.5**，`collection.add()` 一调用就崩。它的包元数据只写了 `numpy>=1.22.5`（过期声明），所以 pip 装的时候毫无警告。**此前一直没暴露**是因为 `nomic-embed-text` 没拉，`registry.embed()` 抛异常被 `except Exception: pass` 吞掉，向量写入路径从未真正执行；模型拉下来后这条路径第一次被走到就崩了 | **已根治**：降级 `chromadb` 到 `0.5.18`（用纯 C++ 编译的 `chroma_hnswlib`，不是 1.x 系列那个按 numpy 2.x ABI 编的 Rust 绑定），配套锁定 `onnxruntime==1.17.3`。隔离环境下实测写入（`add_episode`）+ 查询（`retrieve` 语义召回"苹果"能正确排除不相关记忆）双双通过，无崩溃。`config.yaml` 的 `memory.vector_enabled` 已重新置 **true**。过程中误装过 onnxruntime 1.27.0 触发 pip 自动把共享 anaconda base 的 numpy 升到 2.4.6（污染了 astropy/matplotlib/scipy/numba/contourpy），已立即降回 1.23.5 并核实这些包恢复正常——教训：**装任何依赖前先查它会不会连带升级 numpy**，共享环境改动一步都要复核 |
 | 12 | **本轮 · 严重**：说"明天下午三点交报告"，存进去的 `due_at` 是 **`2023-04-15T15:00:00Z`** | system prompt 里**从未告诉模型今天是几号**，模型只能拿训练数据里的年份猜。今天是 2026 年，于是每个从对话提取的任务都带一个早已过期的截止时间 —— 提醒引擎会把它们全判为逾期并反复追问，**提醒/监督这个核心功能实际是坏的** | ① system prompt 注入 `【当前时间】<带时区的 ISO> + 星期几`，并在提取指令里明确要求"以当前时间为基准换算、带同样时区偏移、拿不准就填 null 不要编"；② 新增 `Butler._sane_due()` 兜底：解析失败或早于当前 1 天以上的时间一律降级为"无截止时间"（宁可没有 deadline，也不能留一个永久逾期的任务去轰炸提醒）。复测：`2026-07-27T15:00:00+08:00` ✓ |
 
 | 13 | **本轮 · 严重**：2 条逾期任务在 20 分钟内轰炸出 **8 条通知**，打满当天配额后**真正临期的任务当天再也提醒不了** | `_check_overdue()` 对每条逾期任务**无条件重发**，而 tick 默认每 5 分钟一次，且完全没有退避机制 | 新增 schema v2 列 `tasks.last_reminded_at`，逾期追问按退避阶梯 `(1, 3, 6, 12, 24)` 小时递增；配额检查从 tick 顶部下移到 `_fire()` 内部逐条判断，用尽即停 |
 | 14 | **本轮 · 严重**：拖延画像 20 分钟内被打到满分且**永不回落** | 拖延分记在**提醒时**（`_check_overdue` 每次重发都 `record_procrastination`），于是同一条任务反复 +1。更关键的是 **`record_reliable()` 全项目从未被任何代码调用** —— `score = p/(p+r)` 里 r 恒为 0，所谓"0~1 拖延分"实际只有 0.3（无数据）和 1.0（有数据）两档，单向不可逆，**自适应提前量这个功能是坏的** | 拖延记账移到**任务完成时**：新增 `Butler.complete_task()`，按 `completed_at` vs `due_at` 判断，逾期→`record_procrastination`，按时→`record_reliable`；`memory.complete_task()` 改为返回完成前的任务行供判断；`PATCH /tasks` 改调 `butler.complete_task()`。实测拖延分现在是真正的比例值（1 逾期 + 1 按时 → 0.50） |
 | 15 | **本轮**：每日提醒配额重启即失效 | `_daily_count` 只存在内存 dict 里，服务一重启就清零 → 重启一次就能再轰炸一轮 | 改为从 `events` 表实时统计（新增 `memory.count_events_since()`）。注意库里时间戳是 **UTC**，该方法入参收 `datetime` 而非字符串并内部归一化 —— 传本地时间字符串会导致比较静默出错 |
+| 16 | **本轮**：重新开启 `vector_enabled` 后，`test_backup.py` 的 `restore()` 报 `PermissionError: [WinError 32] 另一个程序正在使用此文件`，删向量目录失败 | `Memory.close()` 只关了 SQLite 连接，从未关过 chromadb 的 `PersistentClient`（`self._client`）。chroma 内部自己开了一个 `chroma.sqlite3` 连接，不主动释放的话 Windows 下文件锁一直不放，`shutil.rmtree` 删目录就会炸。`vector_enabled: false` 时 `_client` 从未创建，这个 bug 一直没暴露 | `close()` 补上 `self._client._system.stop()`——chromadb 的 `System` 组件有统一生命周期，`stop()` 会级联关闭内部的 `SqliteDB`/`SegmentManager` 等子组件，释放文件锁。实测 `stop()` 后立即 `rmtree` 成功 |
+| 17 | **本轮**：`test_smoke.py` 断言"未在真实 data 下新建 settings.json"失败 | 断言本身的假设过期了——它假设真实 `data/settings.json` **不该存在**，但用户已经用 `start.bat` 真实跑过前端，该文件是合法产物（8 月 2 日写入），不是测试污染 | 断言改为比较测试**前后**的 mtime 是否变化（而不是"存在与否"），在 `setup()` 隔离环境之前先记录真实文件的 mtime |
 
 ### 5.1 尚未验证 / 待确认事项- 现在无法在这个非交互 Bash 环境里用真实主密码跑通 `python run.py status`
   或 `doctor`（会卡在 `getpass` 交互提示，keyring 在此 shell 上下文里似乎
@@ -196,21 +198,13 @@ butler/
   1. 真实数据（`data/memory.db` 里 Jul 23 就已存在的记录，说明用户可能
      已经在自己的终端里真实用过 `python run.py`）解密是否正常、
   2. `doctor`/`status` 输出是否符合预期。
-- **【待用户拍板】chromadb 段错误的根治方案**（见 bug #11）。当前靠
-  `memory.vector_enabled: false` 绕开，代价是**语义检索退化成"最近 N 条"
-  时间召回** —— 记忆还在（加密 SQLite 是真相源，一条没丢），但"想起相关
-  的旧事"这个能力暂时没有。两条路：
-  1. **降 chromadb**（推荐）：装一个和 numpy 1.x 兼容的旧版（如 0.5.x）。
-     影响面只限本项目，`requirements.txt` 本来就写的 `chromadb>=0.4.22`。
-  2. **升 numpy 到 2.x**：能治本，但这是**全局 anaconda base 环境**，
-     里面还有 torch / mindspore / scipy 等，可能连带崩掉你其他项目。
-     若走这条，强烈建议先给 butler 建独立 venv。
-  修好后把 `memory.vector_enabled` 改回 `true`，并注意**首次开启会触发
-  重嵌入迁移**（versioning.py 会自动快照+校验+原子切换，不要绕过）。
-- 语音 / 图片的**端到端真实效果**仍未测：`minicpm-v` 拉取时下载速度只有
-  ~70KB/s 反复中断，`qwen2.5:7b` 同样没拉完（`nomic-embed-text` 已成功）。
-  前端的图片/录音入口已就绪，等模型到位即可直接试。
-  faster-whisper 首次调用还要下 ~500MB 模型。
+- ~~【待用户拍板】chromadb 段错误的根治方案~~ **已解决**：见 bug #11。
+  降级到 `chromadb==0.5.18` + 锁定 `onnxruntime==1.17.3`，`memory.vector_enabled`
+  已重新置 `true`，隔离环境下写入/查询实测通过。真实语义检索能力已恢复，
+  之前"退化为时间召回"的降级状态已结束。
+- 语音 / 图片的**端到端真实效果**仍未测：四个 Ollama 模型已全部拉取成功
+  （`qwen2.5:14b`/`7b`、`minicpm-v`、`nomic-embed-text`），前端的图片/录音
+  入口已就绪，现在可以直接试。faster-whisper 首次调用还要下 ~500MB 模型。
 - 前端目前只在冒烟测试里验证过（HTTP 层），**没有在真实浏览器里点过**。
   需要用户跑 `python run.py serve` 后打开 http://127.0.0.1:8000 实际体验。
   录音功能依赖 `getUserMedia`，localhost 下可用（非 HTTPS 的远程访问会被
@@ -233,8 +227,8 @@ butler/
 
 | 优先级 | 事项 | 说明 |
 |--------|------|------|
-| **P0（阻塞语义记忆）** | 定 chromadb 段错误的根治方案 | 见 bug #11 与 5.1。当前 `memory.vector_enabled: false` 只是绕开，语义检索退化为时间召回。降 chromadb（影响面小，推荐）还是升 numpy（治本但可能波及 anaconda base 里的 torch/mindspore）需要用户拍板 |
-| P0（用户手动步骤） | 拉完剩余 Ollama 模型 | 已有：`qwen2.5:14b`、`nomic-embed-text`。**未完成**：`minicpm-v`（图片理解）、`qwen2.5:7b`（高压力时的轻量档）—— 上次拉取时网速仅 ~70KB/s 反复中断，建议在网络好的时候手动跑 |
+| ~~P0~~ | ~~定 chromadb 段错误的根治方案~~ | **已完成**：见 bug #11、#16。降级 `chromadb==0.5.18`，`vector_enabled` 已重开，语义检索恢复真实可用 |
+| ~~P0~~ | ~~拉完剩余 Ollama 模型~~ | **已完成**：`qwen2.5:14b`、`qwen2.5:7b`、`minicpm-v`、`nomic-embed-text` 四个全部拉取成功。之前 `qwen2.5:7b` 卡在最后 manifest 校验的 TLS 握手超时，大文件本体（4.7GB）其实已下完，重试一次秒过 |
 | P1 | **在真实浏览器里验证前端** | `python run.py serve` → http://127.0.0.1:8000 。冒烟测试只覆盖了 HTTP 层，实际交互（录音授权、图片预览、滑块保存、逾期标注）还没人点过 |
 | P1 | **验证多模态真实效果** | 等 `minicpm-v` 到位后发一张图；语音首次调用会下 ~500MB faster-whisper 模型。重点看转写准确度、图片描述质量，以及同时打游戏（高压力）时是否明显卡顿 |
 | P2 | 开机自启/常驻服务 | 目前需要手动 `python run.py serve`，还没做成后台服务/开机自启 |

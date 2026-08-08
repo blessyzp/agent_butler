@@ -15,7 +15,11 @@ uvicorn>=0.27.0
 python-multipart>=0.0.9
 
 # Vector memory (optional; degrades to recency recall if absent)
-chromadb>=0.4.22
+# Pinned to 0.5.x: chromadb 1.x's Rust bindings are compiled against the
+# numpy 2.x C ABI and segfault (SIGSEGV, uncatchable) on numpy 1.23.5's
+# array layout the instant collection.add() is called. See context_snapshot.md bug #11.
+chromadb==0.5.18
+onnxruntime==1.17.3
 
 # Multimodal: voice (CPU by default) + image preprocessing
 faster-whisper>=1.0.0

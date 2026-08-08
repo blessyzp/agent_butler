@@ -10,6 +10,11 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 from isolation import ROOT, check, report, section, setup
 
+_real_settings = ROOT / "data" / "settings.json"
+_real_settings_mtime_before = (
+    _real_settings.stat().st_mtime if _real_settings.exists() else None
+)
+
 data = setup("butler_smoke")
 print(f"[隔离] data_dir -> {data}")
 
@@ -110,8 +115,9 @@ with TestClient(app) as c:
           r.status_code in (200, 502), f"status={r.status_code} {str(r.json())[:120]}")
 
 section("真实数据目录未被触碰（核查）")
-real = ROOT / "data"
 check("临时库文件已生成在临时目录", (data / "memory.db").exists())
-check("未在真实 data 下新建 settings.json", not (real / "settings.json").exists())
+_mtime_after = _real_settings.stat().st_mtime if _real_settings.exists() else None
+check("真实 data 下的 settings.json 未被本次测试改动",
+      _mtime_after == _real_settings_mtime_before)
 
 report()

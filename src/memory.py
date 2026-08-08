@@ -50,6 +50,7 @@ class Memory:
         # ── 向量索引（可选）──
         self.vector_enabled = False
         self._collection = None
+        self._client = None
         self._init_vector()
 
     # ════════════════════════════════════════════════════

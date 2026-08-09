@@ -85,6 +85,46 @@ with TestClient(app) as c:
     check("DELETE /tasks", c.delete(f"/tasks/{tid}").status_code == 200 and
           all(t["id"] != tid for t in c.get("/tasks").json()))
 
+    section("任务优先级 / 重复任务")
+    r = c.post("/tasks", json={"content": "非法优先级", "priority": 9})
+    check("POST /tasks priority 越界 400", r.status_code == 400)
+    r = c.post("/tasks", json={"content": "非法重复规则", "recurrence": "yearly"})
+    check("POST /tasks recurrence 越界 400", r.status_code == 400)
+
+    r = c.post("/tasks", json={"content": "交周报", "task_type": "工作",
+                               "due_at": "2026-08-03T09:00:00+08:00",
+                               "priority": 2, "recurrence": "weekly"})
+    check("POST /tasks 带优先级/重复", r.status_code == 200)
+    rid = r.json()["id"]
+    row = next(t for t in c.get("/tasks").json() if t["id"] == rid)
+    check("priority/recurrence 正确落库", row["priority"] == 2 and row["recurrence"] == "weekly", row)
+
+    lst = c.get("/tasks").json()
+    check("高优先级任务排在前面", lst[0]["id"] == rid, lst)
+
+    check("PATCH priority 越界 400",
+          c.patch(f"/tasks/{rid}", json={"priority": 5}).status_code == 400)
+    check("PATCH recurrence 越界 400",
+          c.patch(f"/tasks/{rid}", json={"recurrence": "yearly"}).status_code == 400)
+    check("PATCH priority 生效",
+          c.patch(f"/tasks/{rid}", json={"priority": 1}).status_code == 200 and
+          next(t for t in c.get("/tasks").json() if t["id"] == rid)["priority"] == 1)
+
+    check("完成重复任务自动生成下一条",
+          c.patch(f"/tasks/{rid}", json={"status": "done"}).status_code == 200)
+    pending = c.get("/tasks").json()
+    check("下一条已生成（同内容，pending 状态）",
+          any(t["content"] == "交周报" and t["recurrence"] == "weekly" for t in pending), pending)
+    next_task = next(t for t in pending if t["content"] == "交周报")
+    check("下一条截止时间比原来晚 7 天",
+          next_task["due_at"] > "2026-08-03T09:00:00+08:00", next_task["due_at"])
+
+    check("PATCH recurrence='' 取消重复",
+          c.patch(f"/tasks/{next_task['id']}", json={"recurrence": ""}).status_code == 200 and
+          next(t for t in c.get("/tasks").json() if t["id"] == next_task["id"])["recurrence"] is None)
+    check("清理：删除测试任务",
+          c.delete(f"/tasks/{next_task['id']}").status_code == 200)
+
     section("历史记录（新增端点）")
     r = c.get("/history")
     check("GET /history 空库返回空数组", r.status_code == 200 and r.json() == [], r.json())

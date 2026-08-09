@@ -89,6 +89,10 @@
   .task.done .content{text-decoration:line-through;color:var(--dim)}
   .task .sub{font-size:12.5px;color:var(--dim);margin-top:3px}
   .task .sub .overdue{color:var(--bad)}
+  .badge{display:inline-block;font-size:11px;padding:1px 6px;border-radius:4px;
+         margin-right:6px;vertical-align:1px}
+  .badge.prio-1{background:#5f5330;color:var(--warn)}
+  .badge.prio-2{background:#6b3a35;color:var(--bad)}
   .task .acts{display:flex;gap:6px;flex-shrink:0}
   .row{display:flex;gap:8px;flex-wrap:wrap}
   .row > *{flex:1;min-width:150px}
@@ -168,6 +172,17 @@
       </div>
       <div class="row" style="margin-top:8px">
         <input type="text" id="t-type" placeholder="分类（可留空，如 工作 / 生活）">
+        <select id="t-priority" title="优先级">
+          <option value="0">普通</option>
+          <option value="1">重要</option>
+          <option value="2">紧急</option>
+        </select>
+        <select id="t-recur" title="重复">
+          <option value="">不重复</option>
+          <option value="daily">每天</option>
+          <option value="weekly">每周</option>
+          <option value="monthly">每月</option>
+        </select>
         <button class="btn primary" id="t-add" style="flex:0 0 auto;min-width:90px">添加</button>
       </div>
     </div>
@@ -384,15 +399,20 @@ async function loadTasks() {
       return;
     }
     const now = Date.now();
+    const PRIORITY_LABEL = {1: "重要", 2: "紧急"};
+    const RECUR_LABEL = {daily: "每天", weekly: "每周", monthly: "每月"};
     box.innerHTML = list.map(t => {
       const overdue = t.due_at && new Date(t.due_at) < now && taskView === "pending";
       const bits = [];
       if (t.task_type) bits.push(esc(t.task_type));
       if (t.due_at) bits.push(`<span class="${overdue ? "overdue" : ""}">${overdue ? "已逾期 " : "截止 "}${esc(fmtTime(t.due_at))}</span>`);
+      if (t.recurrence) bits.push(`🔁 ${RECUR_LABEL[t.recurrence] || t.recurrence}`);
       if (t.reminded_count) bits.push(`已提醒 ${t.reminded_count} 次`);
+      const prio = PRIORITY_LABEL[t.priority]
+        ? `<span class="badge prio-${t.priority}">${PRIORITY_LABEL[t.priority]}</span>` : "";
       return `<div class="task ${taskView === "done" ? "done" : ""}">
         <div class="body">
-          <div class="content">${esc(t.content)}</div>
+          <div class="content">${prio}${esc(t.content)}</div>
           ${bits.length ? `<div class="sub">${bits.join(" · ")}</div>` : ""}
         </div>
         <div class="acts">
@@ -439,10 +459,13 @@ $("#t-add").onclick = async () => {
     task_type: $("#t-type").value.trim() || null,
     // datetime-local 无时区，转成带本地时区的 ISO，后端才能正确比较
     due_at: dueRaw ? new Date(dueRaw).toISOString() : null,
+    priority: Number($("#t-priority").value),
+    recurrence: $("#t-recur").value || null,
   };
   try {
     await api("/tasks", json("POST", body));
     $("#t-content").value = ""; $("#t-due").value = ""; $("#t-type").value = "";
+    $("#t-priority").value = "0"; $("#t-recur").value = "";
     toast("已添加");
     if (taskView !== "pending") { taskView = "pending"; }
     loadTasks(); refreshStatus();

@@ -11,7 +11,7 @@ from __future__ import annotations
 import sqlite3
 
 # ── 当前结构化 schema 版本 ──
-CURRENT_SCHEMA_VERSION = 2
+CURRENT_SCHEMA_VERSION = 3
 
 # ── 迁移脚本：只增不删，按版本顺序执行 ──
 # 每项 = (目标版本, SQL 语句列表)。新增字段/表放这里，绝不 DROP 用户数据。
@@ -58,6 +58,12 @@ MIGRATIONS: list[tuple[int, list[str]]] = [
     # v2：记录上次提醒时刻，逾期追问才能退避。没有它就只能靠 reminded_count，
     # 无法判断"距离上次提醒过了多久"，会每个 tick 都重发（见 reminder.py）。
     (2, ["ALTER TABLE tasks ADD COLUMN last_reminded_at TEXT"]),
+    # v3：优先级 + 重复任务。priority 数字越大越紧急（显示排序靠前），recurrence
+    # 是 "daily"/"weekly"/"monthly" 或 null —— 完成后按此规则自动生成下一条。
+    (3, [
+        "ALTER TABLE tasks ADD COLUMN priority INTEGER DEFAULT 0",
+        "ALTER TABLE tasks ADD COLUMN recurrence TEXT",
+    ]),
 ]
 
 

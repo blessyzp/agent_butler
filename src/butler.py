@@ -25,17 +25,26 @@ from .vision import VisionHelper
 _EXTRACT_INSTRUCTION = """
 回答用户后，另起一行输出一个 JSON 代码块（```json ... ```），包含你从本轮对话中提取的信息：
 {
-  "tasks": [{"content": "要做的事", "task_type": "类型如 工作/生活/学习", "due_at": "ISO时间或null"}],
+  "tasks": [{"content": "要做的事", "task_type": "类型如 工作/生活/学习", "due_at": "ISO时间或null",
+             "priority": "0=普通/1=重要/2=紧急，拿不准填0", "recurrence": "daily/weekly/monthly/null"}],
   "profile_signals": {"tone_hint": "若用户表达了语气偏好则填 gentle/playful/serious/warm 否则null",
                        "goals": ["新出现的长期目标"], "notes": ["值得记住的偏好/情绪"]}
 }
 due_at 必须以上面【当前时间】为基准换算成绝对时间，并带上同样的时区偏移
 （例如当前时间是 2026-07-26T20:00:00+08:00 时，"明天下午三点" = "2026-07-27T15:00:00+08:00"）。
 绝对不要凭记忆猜年份；说不准具体时刻就填 null，不要编一个。
+recurrence 只有用户明确说"每天/每周/每月"之类才填，否则填 null。
 没有可提取内容时用空数组/ null。JSON 块之前的文字才是给用户看的回复。
 """.strip()
 
 _WEEKDAYS = ("星期一", "星期二", "星期三", "星期四", "星期五", "星期六", "星期日")
+
+# 重复任务：完成时按此规则推算下一次的 due_at
+_RECURRENCE_STEP = {
+    "daily": timedelta(days=1),
+    "weekly": timedelta(weeks=1),
+    "monthly": timedelta(days=30),  # 月份天数不固定，用 30 天近似，足够日常提醒场景
+}
 
 
 class Butler:
@@ -159,6 +168,18 @@ class Butler:
             return None
         return due.isoformat(timespec="seconds")
 
+    @staticmethod
+    def _sane_priority(raw) -> int:
+        try:
+            p = int(raw)
+        except (TypeError, ValueError):
+            return 0
+        return p if p in (0, 1, 2) else 0
+
+    @staticmethod
+    def _sane_recurrence(raw) -> str | None:
+        return raw if raw in _RECURRENCE_STEP else None
+
     def _persist(self, user_input: str, reply: str, extracted: dict) -> None:
         for t in extracted.get("tasks", []) or []:
             content = (t or {}).get("content")
@@ -167,6 +188,8 @@ class Butler:
                     content,
                     task_type=t.get("task_type"),
                     due_at=self._sane_due(t.get("due_at")),
+                    priority=self._sane_priority(t.get("priority")),
+                    recurrence=self._sane_recurrence(t.get("recurrence")),
                 )
         signals = extracted.get("profile_signals") or {}
         # 语气偏好统一由 Settings 承载（前端可见可改），从对话学到就更新它
@@ -199,7 +222,25 @@ class Butler:
                 self.profile.record_procrastination(ttype)
             else:
                 self.profile.record_reliable(ttype)
+        self._spawn_next_recurrence(task, due)
         return task
+
+    def _spawn_next_recurrence(self, task: dict, due: datetime | None) -> None:
+        """重复任务完成后自动生成下一条，避免"每周一交周报"要手动重建。"""
+        rule = task.get("recurrence")
+        step = _RECURRENCE_STEP.get(rule)
+        if step is None:
+            return
+        # 以原定截止时间为基准推算下一次；没有截止时间就从"现在"起算
+        base = due or datetime.now().astimezone()
+        next_due = base + step
+        self.memory.add_task(
+            task["content"],
+            task_type=task.get("task_type"),
+            due_at=next_due.isoformat(timespec="seconds"),
+            priority=task.get("priority") or 0,
+            recurrence=rule,
+        )
 
     @staticmethod
     def _sane_parse(raw) -> datetime | None:

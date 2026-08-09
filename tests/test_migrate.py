@@ -30,15 +30,20 @@ check("v1 库确实没有 last_reminded_at 列", "last_reminded_at" not in cols_
 
 section("执行迁移")
 V.ensure_schema(conn)
-check("user_version 升到 2", conn.execute("PRAGMA user_version").fetchone()[0] == 2)
+check("user_version 升到当前版本", conn.execute("PRAGMA user_version").fetchone()[0]
+      == V.CURRENT_SCHEMA_VERSION)
 cols = {r["name"] for r in conn.execute("PRAGMA table_info(tasks)")}
 check("新增 last_reminded_at 列", "last_reminded_at" in cols)
+check("新增 priority 列", "priority" in cols)
+check("新增 recurrence 列", "recurrence" in cols)
 
 t = conn.execute("SELECT * FROM tasks").fetchone()
 check("原有任务数据完好（加密载荷未动）", t["content_enc"] == "enc_payload_abc", t["content_enc"])
 check("原有字段值保留", t["task_type"] == "工作" and t["reminded_count"] == 3
       and t["due_at"] == "2026-08-01T09:00:00+08:00")
-check("新列对老数据为 NULL（不是伪造时间）", t["last_reminded_at"] is None, t["last_reminded_at"])
+check("新列对老数据为 NULL/默认值（不是伪造数据）",
+      t["last_reminded_at"] is None and t["recurrence"] is None and t["priority"] == 0,
+      (t["last_reminded_at"], t["recurrence"], t["priority"]))
 check("事件表未受影响",
       conn.execute("SELECT detail_enc FROM events").fetchone()[0] == "enc_episode_xyz")
 

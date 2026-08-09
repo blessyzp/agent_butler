@@ -216,18 +216,22 @@ class Memory:
     #  任务
     # ════════════════════════════════════════════════════
     def add_task(self, content: str, task_type: str | None = None,
-                 due_at: str | None = None) -> int:
+                 due_at: str | None = None, priority: int = 0,
+                 recurrence: str | None = None) -> int:
         cur = self.conn.execute(
-            "INSERT INTO tasks(content_enc, task_type, due_at, created_at) "
-            "VALUES(?, ?, ?, ?)",
-            (self.cipher.encrypt(content), task_type, due_at, _now_iso()),
+            "INSERT INTO tasks(content_enc, task_type, due_at, created_at, "
+            "priority, recurrence) VALUES(?, ?, ?, ?, ?, ?)",
+            (self.cipher.encrypt(content), task_type, due_at, _now_iso(),
+             priority, recurrence),
         )
         self.conn.commit()
         return cur.lastrowid
 
     def list_tasks(self, status: str = "pending") -> list[dict]:
+        # 优先级高的在前；同优先级按截止时间（没有截止时间的排最后）
         rows = self.conn.execute(
-            "SELECT * FROM tasks WHERE status = ? ORDER BY due_at IS NULL, due_at",
+            "SELECT * FROM tasks WHERE status = ? "
+            "ORDER BY priority DESC, due_at IS NULL, due_at",
             (status,),
         ).fetchall()
         return [self._task_row(r) for r in rows]
@@ -266,6 +270,18 @@ class Memory:
         )
         self.conn.commit()
 
+    def update_task_priority(self, task_id: int, priority: int) -> None:
+        self.conn.execute(
+            "UPDATE tasks SET priority=? WHERE id=?", (priority, task_id),
+        )
+        self.conn.commit()
+
+    def update_task_recurrence(self, task_id: int, recurrence: str | None) -> None:
+        self.conn.execute(
+            "UPDATE tasks SET recurrence=? WHERE id=?", (recurrence, task_id),
+        )
+        self.conn.commit()
+
     def delete_task(self, task_id: int) -> None:
         self.conn.execute("DELETE FROM tasks WHERE id=?", (task_id,))
         self.conn.commit()
@@ -301,6 +317,8 @@ class Memory:
             "created_at": r["created_at"],
             "reminded_count": r["reminded_count"],
             "last_reminded_at": r["last_reminded_at"],
+            "priority": r["priority"],
+            "recurrence": r["recurrence"],
         }
 
     # ════════════════════════════════════════════════════

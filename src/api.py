@@ -44,11 +44,15 @@ class TaskIn(BaseModel):
     content: str
     task_type: str | None = None
     due_at: str | None = None
+    priority: int = 0                       # 0=普通 1=重要 2=紧急
+    recurrence: str | None = None           # daily / weekly / monthly / null
 
 
 class TaskPatch(BaseModel):
     status: str | None = None       # done / pending
     content: str | None = None
+    priority: int | None = None
+    recurrence: str | None = None   # 传空字符串 "" 表示取消重复
 
 def create_app() -> FastAPI:
     app = FastAPI(title="电子管家 API", version="0.1.0")
@@ -161,7 +165,12 @@ def create_app() -> FastAPI:
 
     @app.post("/tasks")
     def create_task(body: TaskIn) -> dict:
-        tid = butler.memory.add_task(body.content, body.task_type, body.due_at)
+        if body.priority not in (0, 1, 2):
+            raise HTTPException(status_code=400, detail="priority 只能是 0/1/2")
+        if body.recurrence not in (None, "daily", "weekly", "monthly"):
+            raise HTTPException(status_code=400, detail="recurrence 只能是 daily/weekly/monthly")
+        tid = butler.memory.add_task(body.content, body.task_type, body.due_at,
+                                     priority=body.priority, recurrence=body.recurrence)
         return {"id": tid}
 
     @app.patch("/tasks/{task_id}")
@@ -171,6 +180,15 @@ def create_app() -> FastAPI:
             if not content:
                 raise HTTPException(status_code=400, detail="content 不能为空")
             butler.memory.update_task_content(task_id, content)
+        if body.priority is not None:
+            if body.priority not in (0, 1, 2):
+                raise HTTPException(status_code=400, detail="priority 只能是 0/1/2")
+            butler.memory.update_task_priority(task_id, body.priority)
+        if body.recurrence is not None:
+            recurrence = body.recurrence or None    # "" → 取消重复
+            if recurrence not in (None, "daily", "weekly", "monthly"):
+                raise HTTPException(status_code=400, detail="recurrence 只能是 daily/weekly/monthly")
+            butler.memory.update_task_recurrence(task_id, recurrence)
         if body.status == "done":
             butler.complete_task(task_id)      # 同时更新拖延/守时画像
         elif body.status == "pending":

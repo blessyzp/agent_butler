@@ -182,6 +182,44 @@ API 做一致性快照，它会正确处理 WAL 日志，而不是绕开数据�
   `_sane_recurrence`），模型输出越界或编造值时静默降级为默认值（0 /
   null），不会因为小模型的幻觉写入脏数据。
 
+### 3.7 结构化任务提取（LangChain，本轮重构）
+
+原方案是在 system prompt 里拜托模型"回复后另起一行输出一个 ```json 代码块"，
+拿到回复后用正则 `_split_extraction()` 抠出代码块再 `json.loads()`。能跑，
+但脆弱：模型只要没有严格遵守格式（多写一句客套话、漏一个反引号），提取就
+静默失败退化成空字典；而且没有 schema 级别的类型/取值约束，`priority`/
+`recurrence` 越界完全靠事后写的白名单校验补救。
+
+重构为 LangChain 的 `with_structured_output()`：在 `src/extraction.py` 定义
+`ChatExtraction`（`reply` + `tasks: list[TaskExtraction]` +
+`profile_signals: ProfileSignals`）这个 pydantic schema，`priority` 用
+`Literal[0, 1, 2]`、`recurrence` 用 `Literal["daily", "weekly", "monthly"] |
+None` 直接在 schema 层面约束取值范围。一次模型调用直接产出这整个结构化
+对象，不是"先生成自由文本再解析"的两段式，不增加额外的模型调用延迟。
+
+**技术选型踩坑**：`with_structured_output()` 支持三种 `method`。最初按常规
+思路选了 `"function_calling"`（工具调用），但实测在本地 `qwen2.5:7b` 上
+不稳定——模型经常直接不触发工具调用，`tool_calls` 返回空列表，退化成
+一段纯文本。换成 `"json_schema"`（Ollama 原生结构化输出 API，底层走
+`/api/chat` 请求体里的 `format` 参数而不是工具调用协议）后稳定可靠，
+这是最终采用的方式。这提示了一个容易被忽略的点：LangChain 同一个接口
+在不同底层实现路径下，对同一个本地小模型的可靠性可能差异很大，不能默认
+"官方推荐的方式"就是"这个模型上最稳的方式"，需要针对实际用的模型实测
+验证。
+
+**容错设计**：`Butler.chat()` 用 try/except 包裹结构化调用，失败时（模型
+不支持结构化输出、网络错误、schema 校验失败等）退化为原有的 `backend.chat()`
+纯文本调用，跳过本轮提取但保证对话不中断。这不是新增风险，而是把原方案
+本来就有的"静默失败退化"（正则抠不到就是空字典，用户完全无感知）变成
+"显式可观察"（退化时打一行诊断日志）。
+
+**分层校验的取舍**：`_sane_due`/`_sane_priority`/`_sane_recurrence` 这几个
+防御性校验方法全部保留，没有因为 schema 校验而删除。原因是两层校验职责
+不同——schema 保证的是"字段类型对、取值在枚举范围内"（模型不可能给
+`priority=9`），但保证不了"这个 `due_at` 语义上说得通"（模型完全可能给出
+一个格式合法、取值也不越界，但年份是编的、早已过期的 ISO 时间字符串）。
+schema 校验和语义校验是互补的两条防线，不能用其中一条替代另一条。
+
 ---
 
 ## 4. 技术栈
@@ -191,6 +229,7 @@ API 做一致性快照，它会正确处理 WAL 日志，而不是绕开数据�
 | Web 框架 | FastAPI + uvicorn | 类型标注即校验（Pydantic），自动生成 `/docs`，异步友好 |
 | 本地推理 | Ollama（Qwen2.5-14B/7B 对话、nomic-embed-text 嵌入、MiniCPM-V 视觉） | 本地免费、离线可用、显存可控；`/api/tags` 探活即可判定可用性 |
 | 云端兜底 | DeepSeek（OpenAI 兼容 `/chat/completions`） | 高压力/本地不可用时的备份链路，接口兼容意味着后续换任意 OpenAI 兼容供应商零改动 |
+| 结构化提取 | LangChain（`langchain-core`/`langchain-ollama`/`langchain-openai`，锁版本） | `with_structured_output(method="json_schema")` 替代正则解析 JSON 代码块，schema 层面约束字段类型/取值范围（见 3.7） |
 | 加密 | `cryptography`（Fernet + PBKDF2） | 工业标准对称加密，认证加密（防篡改）+ 密钥派生一体 |
 | 密钥管理 | `keyring`（Windows Credential Locker） | 主密码不落盘明文，跨会话免重复输入 |
 | 结构化存储 | SQLite（WAL） | 零运维嵌入式数据库，单文件迁移/备份简单，WAL 支持读写不互斥 |
@@ -320,6 +359,31 @@ Linux 那样允许"删除一个仍被打开的文件"。
 为 None"成为所有分支下都成立的不变量。这提示了一个可以内建到代码
 风格里的习惯：所有可能被条件性赋值的实例属性，都应该在 `__init__`
 里先给一个默认值，而不是依赖某个分支一定会执行。
+
+### 5.5 引入 LangChain 时的依赖冲突：共享 Anaconda 环境的连带升级
+
+**现象**：`pip install langchain-core langchain-ollama langchain-openai` 执行
+后退出码是 0（看起来成功），但 pip 在输出末尾打印了一行容易被忽略的警告：
+`datasets 2.12.0 requires huggingface-hub<1.0.0, but you have
+huggingface-hub 1.24.0 which is incompatible`。
+
+**根因**：`langchain-openai` 依赖的 `openai`/`langsmith` 这条链路间接把共享
+Anaconda base 环境里的 `huggingface-hub` 从 0.x 升级到了 1.24.0，而环境里
+另一个不相关的包 `datasets 2.12.0` 锁定要求 `huggingface-hub<1.0.0`。验证
+`import datasets` 确实报错（`ImportError: cannot import name 'HfFolder'`，
+1.x 版本移除了这个符号）。
+
+**处理方式**：这与第 5.1 节 numpy 被 pip 静默升级到 2.4.6 是同一类风险
+（"pip exit code 0 不代表环境没被连带破坏"），但处理方式不同——上次是
+必须修复（numpy 被破坏会直接段错误影响本项目核心功能），这次先确认
+`datasets` 这个包**不在本项目的依赖图里**（`grep` 全项目代码确认没有
+任何 `import datasets`），也确认 `faster-whisper`（本项目真正依赖、且
+底层也用到 `huggingface_hub` 生态）在新版本下 `import` 正常。结论是
+放着不处理：为一个项目不需要的包去反向锁定 `huggingface-hub<1.0.0`，
+只会把刚装好的 `langchain-openai`/`langsmith` 又打破，属于用一个不存在
+的问题去制造一个真实的问题。**教训**：看到 pip 冲突警告先判断"冲突的
+包是不是我依赖图里的"，不是所有 pip 警告都要修，但必须先验证过才能
+放着不管，不能因为"看起来能 import"就假设没事。
 
 ---
 

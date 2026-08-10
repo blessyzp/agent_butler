@@ -24,3 +24,10 @@ onnxruntime==1.17.3
 # Multimodal: voice (CPU by default) + image preprocessing
 faster-whisper>=1.0.0
 pillow>=10.0.0
+
+# Structured task extraction (tool-calling structured output, replaces
+# regex-parsed JSON code blocks). Pinned: LangChain ships breaking changes
+# across minor versions.
+langchain-core==1.5.3
+langchain-ollama==1.1.0
+langchain-openai==1.4.2

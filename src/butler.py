@@ -5,10 +5,9 @@
 """
 from __future__ import annotations
 
-import json
-import re
 from datetime import datetime, timedelta
 
+from . import extraction
 from .config import get_config
 from .crypto import Cipher
 from .memory import Memory
@@ -22,19 +21,18 @@ from .settings import Settings
 from .speech import Transcriber
 from .vision import VisionHelper
 
-_EXTRACT_INSTRUCTION = """
-回答用户后，另起一行输出一个 JSON 代码块（```json ... ```），包含你从本轮对话中提取的信息：
-{
-  "tasks": [{"content": "要做的事", "task_type": "类型如 工作/生活/学习", "due_at": "ISO时间或null",
-             "priority": "0=普通/1=重要/2=紧急，拿不准填0", "recurrence": "daily/weekly/monthly/null"}],
-  "profile_signals": {"tone_hint": "若用户表达了语气偏好则填 gentle/playful/serious/warm 否则null",
-                       "goals": ["新出现的长期目标"], "notes": ["值得记住的偏好/情绪"]}
-}
-due_at 必须以上面【当前时间】为基准换算成绝对时间，并带上同样的时区偏移
-（例如当前时间是 2026-07-26T20:00:00+08:00 时，"明天下午三点" = "2026-07-27T15:00:00+08:00"）。
-绝对不要凭记忆猜年份；说不准具体时刻就填 null，不要编一个。
-recurrence 只有用户明确说"每天/每周/每月"之类才填，否则填 null。
-没有可提取内容时用空数组/ null。JSON 块之前的文字才是给用户看的回复。
+# 提取的格式（字段/类型）由 extraction.ChatExtraction 这个 pydantic schema
+# 保证，这里只需要给模型语义层面的指导——schema 管不了"这个日期是不是模型
+# 编的年份"这类语义问题。
+_EXTRACT_GUIDANCE = """
+若对话中用户提到具体要做的事，记录到 tasks：
+- due_at 必须以上面【当前时间】为基准换算成绝对 ISO 时间，并带上同样的时区偏移
+  （例如当前时间是 2026-07-26T20:00:00+08:00 时，"明天下午三点" = "2026-07-27T15:00:00+08:00"）。
+  绝对不要凭记忆猜年份；说不准具体时刻就填 null，不要编一个。
+- priority：0=普通/1=重要/2=紧急，拿不准填 0。
+- recurrence：只有用户明确说"每天/每周/每月"之类才填，否则留空。
+若用户表达了语气偏好，tone_hint 填 gentle/playful/serious/warm，否则留空。
+goals/notes 记录新出现的长期目标、值得记住的偏好或情绪，没有就留空。
 """.strip()
 
 _WEEKDAYS = ("星期一", "星期二", "星期三", "星期四", "星期五", "星期六", "星期日")
@@ -100,20 +98,28 @@ class Butler:
         now_str = f"{now.isoformat(timespec='seconds')}（{_WEEKDAYS[now.weekday()]}）"
         system = (
             f"你是用户的私人电子管家，名叫{self.settings.get('persona.name')}。\n"
-            f"用『{tone}』的语气，{emoji}。\n"
+            f"用『{tone}』的语气，{emoji}，reply 字段要像正常聊天一样自然，不要生硬。\n"
             f"【当前时间】{now_str}\n"
             f"【用户画像】\n{self.profile.summary()}\n"
             f"【相关记忆】\n{mem_block}\n"
-            f"请自然对话。\n{_EXTRACT_INSTRUCTION}"
+            f"请自然对话。\n{_EXTRACT_GUIDANCE}"
         )
-
-        role, backend = self.scheduler.resolve()
-        raw = backend.chat([
+        messages = [
             {"role": "system", "content": system},
             {"role": "user", "content": user_input},
-        ])
+        ]
 
-        reply, extracted = self._split_extraction(raw)
+        role, backend = self.scheduler.resolve()
+        model_id = self.registry.role_model_id(role)
+        try:
+            structured_llm = extraction.build_structured_llm(model_id, self.cfg)
+            result = structured_llm.invoke(messages)
+            reply, extracted = result.reply, result.model_dump()
+        except Exception as e:
+            # 结构化调用失败（模型/后端不支持、网络错误、schema 校验失败等）时
+            # 退化为纯文本回复，跳过本轮提取，但不能让对话中断。
+            print(f"ⓘ 结构化提取失败（{e}），本轮退化为纯文本回复，跳过任务提取。")
+            reply, extracted = backend.chat(messages), {}
 
         # 落库：任务 + 画像信号 + 情景记忆
         self._persist(user_input, reply, extracted)
@@ -134,18 +140,6 @@ class Butler:
             combined += f"\n[用户说] {user_text.strip()}"
         reply = self.chat(combined)
         return {"caption": caption, "reply": reply}
-
-    # ── 解析 LLM 附带的 JSON 提取块 ──
-    def _split_extraction(self, raw: str) -> tuple[str, dict]:
-        m = re.search(r"```json\s*(\{.*?\})\s*```", raw, re.DOTALL)
-        if not m:
-            return raw.strip(), {}
-        reply = raw[:m.start()].strip()
-        try:
-            data = json.loads(m.group(1))
-        except json.JSONDecodeError:
-            data = {}
-        return (reply or raw.strip()), data
 
     @staticmethod
     def _sane_due(raw) -> str | None:

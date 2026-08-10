@@ -17,11 +17,12 @@ HERE = Path(__file__).resolve().parent
 
 # (文件名, 说明, 是否需要 Ollama 真实模型)
 SUITES = [
-    ("test_migrate.py",   "schema v1→v2 迁移安全性", False),
-    ("test_backup.py",    "WAL + 备份/恢复完整性", False),
-    ("test_reminder2.py", "提醒退避 / 配额 / 拖延画像", False),
-    ("test_smoke.py",     "API 与前端 30 项冒烟", False),
-    ("test_due.py",       "due_at 日期修复（真实对话）", True),
+    ("test_migrate.py",            "schema v1→v2 迁移安全性", False),
+    ("test_backup.py",             "WAL + 备份/恢复完整性", False),
+    ("test_reminder2.py",          "提醒退避 / 配额 / 拖延画像", False),
+    ("test_extraction_schema.py",  "结构化提取 schema 校验", False),
+    ("test_smoke.py",              "API 与前端 30 项冒烟", False),
+    ("test_due.py",                "due_at 日期修复（真实对话）", True),
 ]
 
 

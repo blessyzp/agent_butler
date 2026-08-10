@@ -50,6 +50,7 @@ start.bat
 | 后端框架 | FastAPI + uvicorn |
 | 本地大模型 | Ollama（Qwen2.5-14B/7B 对话，nomic-embed-text 嵌入，MiniCPM-V 视觉） |
 | 云端兜底 | DeepSeek（OpenAI 兼容接口） |
+| 结构化提取 | LangChain（`with_structured_output`，工具/json_schema 结构化输出，替代原正则解析 JSON 代码块方案） |
 | 加密 | cryptography（Fernet + PBKDF2），密钥存 Windows 密钥链（keyring） |
 | 结构化存储 | SQLite（WAL 模式，加密字段） |
 | 向量检索 | ChromaDB 0.5.18（可选，语义召回；后端异常自动退化为时间召回） |

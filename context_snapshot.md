@@ -235,7 +235,7 @@ butler/
 | P2 | 开机自启/常驻服务 | 目前需要手动 `python run.py serve`，还没做成后台服务/开机自启 |
 | P1 | **实跑一次提醒链路** | bug #13～#15 的修复是用伪造时间戳 + FakeNotifier 测的，`BackgroundScheduler` 真实按 tick 跑、真实 Bark/Telegram 投递（`.env` 里配了 key 才生效）还没端到端验证过。建议造一条 10 分钟后到期的任务观察实际行为 |
 | P2 | 电子监督的周期性复盘报告 | 目前只有到期任务追问和沉默问候，还没有周报/周期性回顾这类更高层的问责机制。画像里的拖延/守时计数现在终于是可信数据了，可以拿来做周报素材 |
-| P2 | 任务优先级 / 重复任务 | `tasks` 表没有 priority、没有 recurrence（"每周一交周报"这类现在只能手动重复建）。versioning.py 里留了 `ALTER TABLE ... ADD COLUMN priority` 的示例注释 |
+| ~~P2~~ | ~~任务优先级 / 重复任务~~ | **已完成**：schema v3 加 `priority`/`recurrence` 列，完成重复任务自动生成下一条，API/前端/LLM 提取同步支持，见 `TECH_DESIGN.md` 3.6 |
 | ~~P2~~ | ~~SQLite 并发稳健性~~ | **已完成**：已开 `PRAGMA journal_mode=WAL`，配套把 `backup.py` 从裸文件复制换成 SQLite 官方 backup API（否则 WAL 里的最新事务会被漏备份），并补了永久测试套件（`tests/`，见目录结构与 4.6） |
 | P2 | 前端体验补强 | 流式输出（现在 14b 冷启动要 60s+，全程只能干等）、任务截止时间的快捷选择（"明天下午三点"）、移动端适配 |
 | P3 | 打包/一键启动脚本 | 降低非技术使用门槛 |
